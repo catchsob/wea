@@ -101,7 +101,7 @@ class WeaG:
         return [obs.get(s) for s in sites]
 
     @classmethod
-    def tostr(cls, observation, nl=False):
+    def tostr(cls, observation, sep=', '):
         '''convert {'O': '11/02 11:20', 'T': 27.5, 'H': 0.73, 'R': 0.0} to
            觀測時間: 06/07 21:40 溫度: 25.6°C, 濕度: 97%, 雨量: 49.0mm
         '''
@@ -114,7 +114,7 @@ class WeaG:
             items.append('濕度: ' + ('N/A' if h == None else f'{h:.0%}'))
             r = observation.get("R")
             items.append('雨量: ' + ('N/A' if r == None else f'{r:.1f}mm'))
-            return [', ', '\n'][nl].join(items)
+            return (sep if sep != None and type(sep) == str else ', ').join(items)
         return ''
 
     def _load_sitemap(self):
