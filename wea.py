@@ -2,7 +2,6 @@ import json
 
 import requests
 from bs4 import BeautifulSoup
-from haversine import haversine
 
 class WeaG:
 
@@ -93,7 +92,8 @@ class WeaG:
         
         # search siteid by coordinates
         elif type(site) == tuple and len(site) == 2 and all(isinstance(v, float) for v in site):
-            ds = [(haversine(self.siteids[s]['coors'], site), s) for s in self.siteids]
+            ds = [(__class__._eudist_sq(self.siteids[s]['coors'], site, True), s) for s in self.siteids]
+            ds = [d for d in ds if d[0]]
             info = []
             for i in sorted(ds)[:n]:
                 siteid = i[1]
@@ -136,6 +136,15 @@ class WeaG:
                 info['O'] = a.text
             info['C'] = self.siteids[siteid]['coors']
         return info
+
+    @staticmethod
+    def _eudist_sq(pt1, pt2, validate=False):
+        def _validate(pt):
+            return pt and type(pt) in (list, tuple) and len(pt) == 2 and all(type(p) in (int, float) for p in pt)
+
+        if validate and (not _validate(pt1) or not _validate(pt2)):
+            return None
+        return (pt1[0] - pt2[0]) ** 2 + (pt1[1] - pt2[1]) ** 2
 
     @staticmethod
     def tostr(info, sep=', '):
