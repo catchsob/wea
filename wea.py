@@ -1,190 +1,221 @@
-import json
+# dependencies: requests, bs4
+
+from threading import Thread
 
 import requests
 from bs4 import BeautifulSoup
 
-class WeaG:
 
-    _URL_RAIN = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001'
-    _URL_STMAP = 'https://www.cwa.gov.tw/Data/js/Observe/OSM/C/STMap.json'
-    _URL_WEB = 'https://www.cwa.gov.tw/V8/C/W/Observe/MOD/24hr/SITEID.html'
+_URLS = {'site_map': 'https://www.cwa.gov.tw/Data/js/Observe/OSM/C/STMap.json',
+         'site_obs': 'https://www.cwa.gov.tw/V8/C/W/Observe/MOD/24hr/TBD.html',
+         'opendata': ['https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001',
+                      'https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001',
+                      'https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001']
+        }
+
+_sitemap = {}
+
+
+def grab(site: str | tuple | list, key: str | None = None) -> dict:
+    """grab observed temperature, humidity, and rainfall information from official CWA website
+    site   - site name, site id, or site coordinates 
+    key    - if the open data API key from CWA is assigned, weather information will be retrieved via the API;
+             otherwise, it will be scraped from CWA website only
+    return - name of site, observation time, temperature, humidity, and rainfall in dict,
+             ex of normal: {'S': '臺北', 'O': '11/02 11:20', 'T': 27.5, 'H': 0.73, 'R': 0.0}
+             ex of no info: {}
+    """
     
-    def __init__(self, env_json='env.json'):
-        """
-        env_json - environment variables JSON file name , two parameters would be handled:
-                   1. 'CWA_KEY', will grab rainfall information if key is assigned
-                   2. 'VERBOSE', will dump more message if true is assigned
-        """
-        # init env
-        try:
-            with open(env_json, 'r', encoding='utf-8') as f:
-                env = json.load(f)
-        except Exception as e:
-            env = {}
-            print(f'handle {env_json} got Exception:', e)
-        self.env = {'CWA_KEY': env.get('CWA_KEY'),
-                    'VERBOSE': env.get('VERBOSE', False)}
-        
-        # siteids = {'46694': {'name': '基隆', 'src': 'web', 'coors': (25.13331389, 121.740475)},
-        #            'C1F87': {'name': '上谷關', 'src': 'C1F871', 'coors': (121.01865, 24.203484)}}
-        self.siteids = {}
-        self._init_web()
-        if self.env['CWA_KEY']:
-            self._init_rain()
+    # prepare site map
+    global _sitemap
+    if not _sitemap:
+        _sitemap = _load_sitemap()
 
-    def _init_web(self):
-        r = requests.get(__class__._URL_STMAP)
-        if r.status_code == 200:
-            for i in r.json():
-                self.siteids[i['ID']] = {'name': i['STname'],
-                                         'src': 'web',
-                                         'coors': (float(i['Lat']), float(i['Lon']))}
-            if self.env['VERBOSE']:
-                print(f'_init_web() update {len(r.json())} sites')
+    # confirm and convert input
+    if type(site) == str:
+        if site.isascii():
+            if site in _sitemap:
+                site_type = 'wid'
+            elif len(site) == 6:
+                site_type = 'aid'
+            else:
+                site_type = 'name'
         else:
-            print('_init_web() got', r.status_code)
-    
-    def _init_rain(self):
-        params = {'Authorization': self.env['CWA_KEY']}
-        r = requests.get(__class__._URL_RAIN, params=params)
-        if r.status_code == 200:
-            count = 0
-            for i in r.json()['records']['Station']:
-                i_id = i['StationId'][:-1]
-                if i_id not in self.siteids:
-                    self.siteids[i_id] = {'name': i['StationName'],
-                                          'src': i['StationId'],
-                                          'coors': (i['GeoInfo']['Coordinates'][1]['StationLatitude'],
-                                                    i['GeoInfo']['Coordinates'][1]['StationLongitude'])
-                                         }
-                    count += 1
-            if self.env['VERBOSE']:
-                print(f'_init_rain() update {count} sites')
-        else:
-            print('_init_rain() got', r.status_code)
-
-    def grab(self, site, n=1):
-        """grab weather information of specific site name, or of nereast site coorindate
-        site   - site name of str or site coordinate of tuple(latitude, longitude)
-        n      - site number of weather information to be grabbed, must be between 1 ~ 5 of int
-        return - weather information in dict or list, ex:
-                 n == 1
-                 {'R': 0.0, 'H': 0.84, 'T': 28.5, 'O': '09/03 21:30', 'C': (23.97512778, 121.613275)}
-                 n > 1
-                 [{'O': '09/03 21:30', 'R': 0.0, 'H': 0.84, 'T': 28.5, 'C': (23.97512778, 121.613275)},
-                  {'O': '2024-09-03 21:40:00', 'R': 0.0, 'C': (23.972935, 121.60599)}]     
-        """
-        n = max(1, min(5, type(n) == int and n))  # size should be between 1 ~ 5
-        
-        # search siteid by name
-        if type(site) == str:
-            info = []
-            for siteid in self.siteids:
-                if self.siteids[siteid]['name'] == site:
-                    src = self.siteids[siteid]['src']
-                    if r := self._grab_web(siteid) if src == 'web' else self._grab_rain(src):
-                        info.append(r)
-                        if len(info) == n:
-                            break
-            if n == 1:
-                return info[0] if info else {}
-            return info
-        
-        # search siteid by coordinates
-        elif type(site) == tuple and len(site) == 2 and all(isinstance(v, float) for v in site):
-            ds = [(__class__._eudist_sq(self.siteids[s]['coors'], site, True), s) for s in self.siteids]
-            ds = [d for d in ds if d[0]]
-            info = []
-            for i in sorted(ds)[:n]:
-                siteid = i[1]
-                src = self.siteids[siteid]['src']
-                if r := self._grab_web(siteid) if src == 'web' else self._grab_rain(src):
-                    r['S'] = self.siteids[siteid]['name']
-                    info.append(r)
-            if n == 1:
-                return info[0] if info else {}
-            return info
-
+            site_type = 'name'
+    elif type(site) in (tuple, list) and len(site) == 2 and type(site[0]) == float and type(site[1]) == float:
+        site_type, site = 'wid', _nearest(site)
+    else:
         return {}
-
-    def _grab_rain(self, siteid):
-        params = {'Authorization': self.env['CWA_KEY'],
-                  'RainfallElement': 'Now',
-                  'StationId': siteid}
-        info = {}
-        r = requests.get(__class__._URL_RAIN, params=params)
-        if r.status_code == 200:
-            if r.json()['records']['Station']:
-                a = r.json()['records']['Station'][0]
-                info['O'] = a['ObsTime']['DateTime'].replace('+08:00', '').replace('T', ' ')
-                info['R'] = float(a['RainfallElement']['Now']['Precipitation'])
-                info['C'] = self.siteids[siteid[:-1]]['coors']
-        return info
-        
-    def _grab_web(self, siteid):
-        info = {}
-        r = requests.get(__class__._URL_WEB.replace('SITEID', siteid))
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            if a := soup.find(headers="rain"):
-                info['R'] = float(a.text)
-            if a := soup.find(headers="hum"):
-                info['H'] = float(a.text)/100
-            if a := soup.find(class_="tem-C"):
-                info['T'] = float(a.text)
-            if a := soup.find(headers="time"):
-                info['O'] = a.text
-            info['C'] = self.siteids[siteid]['coors']
-        return info
-
-    @staticmethod
-    def _eudist_sq(pt1, pt2, validate=False):
-        def _validate(pt):
-            return pt and type(pt) in (list, tuple) and len(pt) == 2 and all(type(p) in (int, float) for p in pt)
-
-        if validate and (not _validate(pt1) or not _validate(pt2)):
-            return None
-        return (pt1[0] - pt2[0]) ** 2 + (pt1[1] - pt2[1]) ** 2
-
-    @staticmethod
-    def tostr(info, sep=', '):
-        """translate grabbed weather information to readble str
-        info - grabbed weather information of dict
-        sep  - separator of each weather information
-        """
-        if not info or type(info) != dict:
-            return '無此站'
-        
-        r = []
-        if 'S' in info:
-            r.append(f'測站: {info["S"]}')
-        if 'O' in info:
-            r.append(f'時間: {info["O"]}')
-        if 'T' in info:
-            r.append(f'溫度: {info["T"]:.1f}℃')
-        if 'H' in info:
-            r.append(f'濕度: {info["H"]:.1%}')
-        if 'R' in info:
-            r.append(f'雨量: {info["R"]:.1f}mm')
-
-        return (type(sep) == str and sep or ', ').join(r)
     
+    grab_web = {'wid': _grab_web_by_siteid, 'name': _grab_web_by_sitename}
+
+    # grab both API and Web if the key is provided
+    if key and type(key) == str:
+        def _grab_web_wrapper():
+            nonlocal infow
+            infow = grab_web[site_type](site)
+
+        def _grab_api_wrapper():
+            nonlocal infoa
+            infoa = _grab_api(site, site_type, key)
+
+        infow, infoa = {}, {}
+        tw, ta = None, None
+        if site_type in ('name', 'wid'):
+            tw = Thread(target=_grab_web_wrapper, daemon=True)
+            tw.start()
+        if site_type in ('name', 'aid'):
+            ta = Thread(target=_grab_api_wrapper, daemon=True)
+            ta.start()
+        if tw:
+            tw.join()
+        if ta:
+            ta.join()
+
+        return (infoa, infow)[len(infow) > len(infoa)]
+    
+    # grab Web only if no key is provided
+    return grab_web[site_type](site) if site_type != 'aid' else {}
+
+def _grab_api(site, site_type, key):
+    SITE_KEYS = {'name': 'StationName', 'aid': 'StationId'}
+    site_key = SITE_KEYS[site_type]
+
+    def _grab_api_core(url):
+        nonlocal info
+        r = requests.get(url, params=params)
+        if r.status_code == 200 and r.headers.get('Content-Type').startswith('application/json'):
+            if (j := r.json()) and (j := j.get('records')) and (sites := j.get('Station')):
+                for s in sites:
+                    if s.get(site_key) == site:
+                        if re := s.get('RainfallElement'):
+                            if (v := re.get('Now')) and (v := v.get('Precipitation')) != None:
+                                info['R'] = float(v)
+                        if we := s.get('WeatherElement'):
+                            if v := we.get('AirTemperature'):
+                                info['T'] = float(v)
+                            if v := we.get('RelativeHumidity'):
+                                info['H'] = float(v) / 100
+                        if info and (v := s.get('ObsTime')) and (v := v.get('DateTime')):
+                            info['O'] = v.replace(':00+08:00', '').replace('T', ' ')
+                            if v := s.get('StationName'):
+                                info['S'] = v
+                            if v:= s.get('StationId'):
+                                info['I'] = v
+                            if ((v := s.get('GeoInfo')) and
+                                (v := v.get('Coordinates')) and
+                                len(v) > 1 and
+                                (lan := v[1].get('StationLatitude')) and
+                                (lon := v[1].get('StationLongitude'))):
+                                info['C'] = (float(lan), float(lon))
+                            break
+        
+    params = {'Authorization': key, site_key: site}
+    info = {}
+    threads = [None] * len(_URLS['opendata'])
+    for i, url in enumerate(_URLS['opendata']):
+        threads[i] = Thread(target=_grab_api_core, args=(url,), daemon=True)
+        threads[i].start()
+    for t in threads:
+        t.join()
+
+    return info
+
+def _grab_web_by_siteid(siteid):
+    info = {}
+    r = requests.get(_URLS['site_obs'].replace('TBD', siteid))
+    if r.status_code == 200:
+        soup = BeautifulSoup(r.text, 'html.parser')
+        if v := soup.find(class_='tem-C'):
+            info['T'] = float(v.text)
+        if v := soup.find(headers='hum'):
+            info['H'] = float(v.text)/100
+        if v := soup.find(headers='rain'):
+            info['R'] = float(v.text)
+        if info:
+            info['I'] = siteid
+            if (v := soup.find('tr')) and ((v := v.get('data-cstname')) and type(v) == str):
+                info['S'] = v
+            if (v := _sitemap.get(siteid)) and (v := v.get('coors')):
+                info['C'] = v
+            if v := soup.find(headers='time'):
+                info['O'] = v.text
+    return info
+    
+def _grab_web_by_sitename(sitename):
+    info = {}
+    if siteid := _get_siteid(sitename):
+        info = _grab_web_by_siteid(siteid)
+        if not info.get('S'):
+            info['S'] = sitename
+    return info
+
+def _get_siteid(site):
+    for id_ in _sitemap:
+        if site == _sitemap[id_].get('name'):
+            return id_
+
+def _load_sitemap():
+    sitemap = {}
+    r = requests.get(_URLS['site_map'])
+    if r.status_code == 200 and r.headers.get('Content-Type').startswith('application/json'):
+        for s in r.json():
+            if (name := s.get('STname')) and (id_ := s.get('ID')):
+                sitemap[id_] = {'name': name}
+                if (lat := s.get('Lat')) and (lon := s.get('Lon')):
+                    sitemap[id_]['coors'] = (float(lat), float(lon))
+    return sitemap
+
+def _nearest(coors):
+    def eud(coors1, coors2):
+        return (coors1[0] - coors2[0]) ** 2 + ((coors1[1] - coors2[1]) ** 2)
+
+    return min((eud(coors, _sitemap[sid]['coors']), _sitemap[sid]['name']) for sid in _sitemap)[1]
+
+def tostr(info: dict, sep: str = ', ', show: str | None = 'SOTHR') -> str:
+    """translate grabbed weather information to readble str
+    info   - grabbed weather information of dict, ex: {'S': '臺北', 'O': '06/07 10:10', 'T': 25.6, 'H': 0.97, 'R': 49.0}
+    sep    - separator of each weather information
+    show   - control which information to show
+             S: station id
+             C: coordinates
+             O: observation time
+             T: temperature
+             H: humidity
+             R: rainfall
+    return - ex of normal: '測站: 臺北, 時間: 06/07 10:10, 溫度: 25.6°C, 濕度: 97%, 雨量: 49.0mm'
+             ex of error: '無觀測!' 
+    """
+    if not info or type(info) != dict:
+        return '無觀測'
+    
+    show_allowed, show_default = 'SICOTHR', 'SOTHR'
+    show = ''.join(c for c in show if c in show_allowed) if show and type(show) == str else show_default
+
+    elements = {
+        'S': 'S' in info and f'測站: {info["S"]}' or None,
+        'I': 'I' in info and f'編號: {info["I"]}' or None,
+        'C': 'C' in info and f'座標: ({info["C"][0]}, {info["C"][1]})' or None,
+        'O': 'O' in info and f'時間: {info["O"]}' or None,
+        'T': 'T' in info and f'溫度: {info["T"]:.1f}℃' or None,
+        'H': 'H' in info and f'濕度: {info["H"]:.1%}' or None,
+        'R': 'R' in info and f'雨量: {info["R"]:.1f}mm' or None
+    }
+    toshow = [elements[c] for c in show if c in elements and elements[c]]
+    return (type(sep) == str and sep or ', ').join(toshow)
+
 if __name__ == '__main__':
     import argparse
+    from time import time
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('site', help='site name')
-    parser.add_argument('--env', '-e', default='env.json',
-                        help='environment file in json, default env.json')
-    parser.add_argument('--size', '-n', type=int, default=1,
-                        help='max number of sites would be grabbed, default 1')
-
+    parser.add_argument('site', nargs='+')
+    parser.add_argument('--key', '-k')
+    parser.add_argument('--show', default='SICOTHR', help='availabe showing indicators are SICOTHR')
+    parser.add_argument('--sep', default=', ')
     args = parser.parse_args()
-
-    w = WeaG(args.env)
-    r = w.grab(args.site, args.size)
-    if type(r) == dict:
-        print(w.tostr(r))
-    elif type(r) == list:
-        for i in r:
-            print(w.tostr(i))
+    
+    start = time()
+    for s in args.site:
+        print(tostr(grab(s, args.key), sep=args.sep, show=args.show))
+    print(f'{time()-start:.3f}s')
