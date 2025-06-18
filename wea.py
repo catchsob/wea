@@ -1,5 +1,7 @@
 # dependencies: requests, bs4
 
+__vresino__ = '0.2.1'
+
 from threading import Thread
 
 import requests
@@ -170,7 +172,7 @@ def _nearest(coors):
     def eud(coors1, coors2):
         return (coors1[0] - coors2[0]) ** 2 + ((coors1[1] - coors2[1]) ** 2)
 
-    return min((eud(coors, _sitemap[sid]['coors']), _sitemap[sid]['name']) for sid in _sitemap)[1]
+    return min((eud(coors, _sitemap[sid]['coors']), sid) for sid in _sitemap)[1]
 
 def tostr(info: dict, sep: str = ', ', show: str | None = 'SOTHR') -> str:
     """translate grabbed weather information to readble str
