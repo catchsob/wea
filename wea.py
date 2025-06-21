@@ -1,6 +1,6 @@
 # dependencies: requests, bs4
 
-__vresino__ = '0.2.1'
+__vresino__ = '0.2.2'
 
 from threading import Thread
 
@@ -86,31 +86,31 @@ def _grab_api(site, site_type, key):
     def _grab_api_core(url):
         nonlocal info
         r = requests.get(url, params=params)
-        if r.status_code == 200 and r.headers.get('Content-Type').startswith('application/json'):
-            if (j := r.json()) and (j := j.get('records')) and (sites := j.get('Station')):
-                for s in sites:
-                    if s.get(site_key) == site:
-                        if re := s.get('RainfallElement'):
-                            if (v := re.get('Now')) and (v := v.get('Precipitation')) != None:
-                                info['R'] = float(v)
-                        if we := s.get('WeatherElement'):
-                            if v := we.get('AirTemperature'):
-                                info['T'] = float(v)
-                            if v := we.get('RelativeHumidity'):
-                                info['H'] = float(v) / 100
-                        if info and (v := s.get('ObsTime')) and (v := v.get('DateTime')):
-                            info['O'] = v.replace(':00+08:00', '').replace('T', ' ')
-                            if v := s.get('StationName'):
-                                info['S'] = v
-                            if v:= s.get('StationId'):
-                                info['I'] = v
-                            if ((v := s.get('GeoInfo')) and
-                                (v := v.get('Coordinates')) and
-                                len(v) > 1 and
-                                (lan := v[1].get('StationLatitude')) and
-                                (lon := v[1].get('StationLongitude'))):
-                                info['C'] = (float(lan), float(lon))
-                            break
+        if (r.status_code == 200 and r.headers.get('Content-Type').startswith('application/json') and
+            (j := r.json()) and (j := j.get('records')) and (sites := j.get('Station'))):
+            for s in sites:
+                if s.get(site_key) == site:
+                    if re := s.get('RainfallElement'):
+                        if (v := re.get('Now')) and (v := v.get('Precipitation')) != None:
+                            info['R'] = float(v)
+                    if we := s.get('WeatherElement'):
+                        if v := we.get('AirTemperature'):
+                            info['T'] = float(v)
+                        if v := we.get('RelativeHumidity'):
+                            info['H'] = float(v) / 100
+                    if info and (v := s.get('ObsTime')) and (v := v.get('DateTime')):
+                        info['O'] = v.replace(':00+08:00', '').replace('T', ' ')
+                        if v := s.get('StationName'):
+                            info['S'] = v
+                        if v:= s.get('StationId'):
+                            info['I'] = v
+                        if ((v := s.get('GeoInfo')) and
+                            (v := v.get('Coordinates')) and
+                            len(v) > 1 and
+                            (lan := v[1].get('StationLatitude')) and
+                            (lon := v[1].get('StationLongitude'))):
+                            info['C'] = (float(lan), float(lon))
+                        break
         
     params = {'Authorization': key, site_key: site}
     info = {}
