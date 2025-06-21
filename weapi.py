@@ -1,7 +1,7 @@
 # dependencies: flask, wea, requests, bs4
 
 
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 
 import flask
@@ -18,6 +18,7 @@ def do_wea():
     if ((d := flask.request.form) and (site := d.get('site'))) or \
         ((d := flask.request.get_json()) and (site := d.get('site'))):
         r = wea.grab(site)
+        print(f'[weapi] site:{site} got {r}', flush=True)
         return r if d.get('raw') == True else wea.tostr(r)
     return 400
 
