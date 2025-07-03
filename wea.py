@@ -1,7 +1,7 @@
 # dependencies: requests, bs4
 
 
-__version__ = '0.2.3'
+__version__ = '0.2.4'
 
 
 from threading import Thread
@@ -130,12 +130,21 @@ def _grab_web_by_siteid(siteid):
     r = requests.get(_URLS['site_obs'].replace('TBD', siteid))
     if r.status_code == 200:
         soup = BeautifulSoup(r.text, 'html.parser')
-        if v := soup.find(class_='tem-C'):
-            info['T'] = float(v.text)
-        if v := soup.find(headers='hum'):
-            info['H'] = float(v.text)/100
-        if v := soup.find(headers='rain'):
-            info['R'] = float(v.text)
+        if (v := soup.find(headers='temp')) and (v := (v.find(class_='tem-C'))):  # 0.2.4, to prevent abnormalities
+            try:
+                info['T'] = float(v.text)
+            except:
+                ...
+        if v := soup.find(headers='hum'):  # 0.2.4, to prevent abnormalities
+            try:
+                info['H'] = float(v.text)/100
+            except:
+                ...
+        if v := soup.find(headers='rain'):  # 0.2.4, to prevent abnormalities
+            try:
+                info['R'] = float(v.text)
+            except:
+                ...
         if info:
             info['I'] = siteid
             if (v := soup.find('tr')) and ((v := v.get('data-cstname')) and type(v) == str):
